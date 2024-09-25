@@ -2,7 +2,6 @@
 
 # dependencies
 node_modules/
-node_modules.zip
 /node_modules
 /.pnp
 .pnp.js
@@ -25,3 +24,4 @@ yarn-debug.log*
 yarn-error.log*
 "src - Copy/" 
 "*.zip" 
+node_modules.zip
