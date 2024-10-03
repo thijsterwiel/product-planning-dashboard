@@ -1,12 +1,19 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { format, parse, differenceInDays, addDays, startOfYear, endOfYear, getWeek, getQuarter } from 'date-fns';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
+import { format, parse, differenceInDays, addDays, startOfYear, endOfYear, getWeek, isValid, min, max } from 'date-fns';
 import { ZoomIn, ZoomOut } from 'lucide-react';
+
+const formatDateForTooltip = (dateString) => {
+  if (!dateString) return '';
+  const date = parse(dateString, 'dd-MM-yyyy', new Date());
+  return isValid(date) ? format(date, 'dd-MM-yyyy') : '';
+};
 
 const TimelineView = ({ products }) => {
   const containerRef = useRef(null);
   const [dimensions, setDimensions] = useState({ width: 1000, height: 500 });
   const [zoom, setZoom] = useState(1);
   const [hoveredProduct, setHoveredProduct] = useState(null);
+  const [hoverPosition, setHoverPosition] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     if (containerRef.current) {
@@ -26,8 +33,8 @@ const TimelineView = ({ products }) => {
 
   const parseDate = (dateString) => {
     if (!dateString) return null;
-    const parsedDate = new Date(dateString);
-    return isNaN(parsedDate.getTime()) ? null : parsedDate;
+    const parsedDate = parse(dateString, 'dd-MM-yyyy', new Date());
+    return isValid(parsedDate) ? parsedDate : null;
   };
 
   const getColorForPlanningType = (planningType) => {
@@ -41,8 +48,26 @@ const TimelineView = ({ products }) => {
     return planningTypeColors[planningType] || '#CCCCCC';
   };
 
-  const yearStart = startOfYear(new Date(2025, 0, 1));
-  const yearEnd = endOfYear(new Date(2025, 11, 31));
+  const sortedProducts = useMemo(() => {
+    return [...products].sort((a, b) => {
+      const startA = parseDate(a.startDate);
+      const startB = parseDate(b.startDate);
+      return startA && startB ? startA.getTime() - startB.getTime() : 0;
+    });
+  }, [products]);
+
+  const { minDate, maxDate } = useMemo(() => {
+    const dates = sortedProducts
+      .flatMap(p => [parseDate(p.startDate), parseDate(p.endDate)])
+      .filter(Boolean);
+    return {
+      minDate: min(dates),
+      maxDate: max(dates)
+    };
+  }, [sortedProducts]);
+
+  const yearStart = startOfYear(minDate || new Date());
+  const yearEnd = endOfYear(maxDate || new Date());
   const totalDays = differenceInDays(yearEnd, yearStart) + 1;
 
   const chartWidth = Math.max(dimensions.width, 1000) * zoom;
@@ -55,24 +80,19 @@ const TimelineView = ({ products }) => {
     return days * dayWidth;
   };
 
-  const months = Array.from({ length: 12 }, (_, i) => new Date(2025, i, 1));
-  const weeks = Array.from({ length: 53 }, (_, i) => addDays(yearStart, i * 7));
+  const months = Array.from({ length: differenceInDays(yearEnd, yearStart) / 30 }, (_, i) => addDays(yearStart, i * 30));
+  const weeks = Array.from({ length: Math.ceil(totalDays / 7) }, (_, i) => addDays(yearStart, i * 7));
 
   const holidays = [
-    { date: '02-14-2025', name: "Valentine's Day" },
-    { date: '04-20-2025', name: 'Easter' },
-    { date: '10-31-2025', name: 'Halloween' },
-    { date: '11-28-2025', name: 'Black Friday' },
-    { date: '12-25-2025', name: 'Christmas' }
-  ];
-
-  const groupedProducts = products.reduce((acc, product) => {
-    if (!acc[product.brand]) {
-      acc[product.brand] = [];
-    }
-    acc[product.brand].push(product);
-    return acc;
-  }, {});
+    { date: '14-02', name: "Valentine's Day" },
+    { date: '20-04', name: 'Easter' },
+    { date: '31-10', name: 'Halloween' },
+    { date: '28-11', name: 'Black Friday' },
+    { date: '25-12', name: 'Christmas' }
+  ].map(holiday => ({
+    ...holiday,
+    date: `${holiday.date}-${yearStart.getFullYear()}`
+  }));
 
   return (
     <div>
@@ -95,7 +115,7 @@ const TimelineView = ({ products }) => {
               fontSize="12"
               textAnchor="start"
             >
-              {format(month, 'MMM')}
+              {format(month, 'MMM yyyy')}
             </text>
           ))}
 
@@ -122,19 +142,6 @@ const TimelineView = ({ products }) => {
               y2={chartHeight}
               stroke="#CCCCCC"
               strokeWidth="1"
-            />
-          ))}
-
-          {/* Draw quarter separators */}
-          {months.filter((_, i) => i % 3 === 0).map((month, index) => (
-            <line
-              key={`quarter-line-${index}`}
-              x1={getXPosition(month)}
-              y1="35"
-              x2={getXPosition(month)}
-              y2={chartHeight}
-              stroke="#999999"
-              strokeWidth="2"
             />
           ))}
 
@@ -180,79 +187,90 @@ const TimelineView = ({ products }) => {
             );
           })}
 
-          {/* Draw product bars and images */}
-          {Object.entries(groupedProducts).map(([brand, brandProducts], brandIndex) => (
-            <g key={brand}>
-              <text
-                x="0"
-                y={brandIndex * (brandProducts.length * 50 + 30) + 65}
-                fontSize="14"
-                fontWeight="bold"
+          {/* Draw product bars */}
+          {sortedProducts.map((product, index) => {
+            const startDate = parseDate(product.startDate);
+            const endDate = parseDate(product.endDate);
+            
+            if (!startDate || !endDate) return null;
+
+            const barStart = getXPosition(startDate);
+            const barWidth = Math.max(getXPosition(endDate) - barStart, 1);
+            const yPosition = index * 30 + 70;
+
+            return (
+              <g 
+                key={product.id}
+                onMouseEnter={(e) => {
+                  setHoveredProduct(product);
+                  setHoverPosition({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseMove={(e) => {
+                  setHoverPosition({ x: e.clientX, y: e.clientY });
+                }}
+                onMouseLeave={() => setHoveredProduct(null)}
               >
-                {brand}
-              </text>
-              {brandProducts.map((product, index) => {
-                const startDate = parseDate(product.startDate);
-                const endDate = parseDate(product.endDate);
-                
-                if (!startDate || !endDate) return null;
-
-                const barStart = getXPosition(startDate);
-                const barWidth = Math.max(getXPosition(endDate) - barStart, 1);
-                const yPosition = brandIndex * (brandProducts.length * 50 + 30) + index * 50 + 70;
-
-                return (
-                  <g 
-                    key={product.id}
-                    onMouseEnter={() => setHoveredProduct(product)}
-                    onMouseLeave={() => setHoveredProduct(null)}
-                  >
-                    <image
-                      href={product.image}
-                      x={0}
-                      y={yPosition}
-                      height="36"
-                      width="36"
-                    />
-                    <rect
-                      x={barStart + 40}
-                      y={yPosition}
-                      width={Math.max(barWidth - 40, 1)}
-                      height="40"
-                      fill={getColorForPlanningType(product.planningType)}
-                      rx="5"
-                      ry="5"
-                    />
-                    <text
-                      x={barStart + 45}
-                      y={yPosition + 25}
-                      fontSize="12"
-                      fill="white"
-                    >
-                      {product.description}
-                    </text>
-                  </g>
-                );
-              })}
-            </g>
-          ))}
-
-          {/* Tooltip */}
-          {hoveredProduct && (
-            <foreignObject x="10" y="10" width="200" height="100">
-              <div xmlns="http://www.w3.org/1999/xhtml" style={{ background: 'white', padding: '10px', border: '1px solid black' }}>
-                <p><strong>{hoveredProduct.description}</strong></p>
-                <p>Start: {hoveredProduct.startDate}</p>
-                <p>End: {hoveredProduct.endDate}</p>
-                <p>Type: {hoveredProduct.planningType}</p>
-              </div>
-            </foreignObject>
-          )}
+                <rect
+                  x={barStart}
+                  y={yPosition}
+                  width={barWidth}
+                  height="20"
+                  fill={getColorForPlanningType(product.planningType)}
+                  rx="5"
+                  ry="5"
+                />
+                <text
+                  x={barStart + 5}
+                  y={yPosition + 15}
+                  fontSize="12"
+                  fill="white"
+                >
+                  {product.description}
+                </text>
+              </g>
+            );
+          })}
         </svg>
       </div>
+      
+      {/* Tooltip with image */}
+      {hoveredProduct && (
+        <div 
+          style={{
+            position: 'fixed',
+            left: `${hoverPosition.x + 10}px`,
+            top: `${hoverPosition.y + 10}px`,
+            background: 'white',
+            padding: '10px',
+            border: '1px solid black',
+            borderRadius: '5px',
+            zIndex: 1000,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'start',
+            maxWidth: '300px'
+          }}
+        >
+          <img 
+            src={hoveredProduct.image} 
+            alt={hoveredProduct.description} 
+            style={{ width: '50px', height: '50px', objectFit: 'contain', marginRight: '10px' }}
+          />
+          <div>
+            <p><strong>{hoveredProduct.description}</strong></p>
+            <p>Brand: {hoveredProduct.brand}</p>
+            <p>Start: {formatDateForTooltip(hoveredProduct.startDate)}</p>
+            <p>End: {formatDateForTooltip(hoveredProduct.endDate)}</p>
+            <p>Type: {hoveredProduct.planningType}</p>
+            <p>Season: {hoveredProduct.season}</p>
+            <p>Retailers: {hoveredProduct.retailer.join(', ')}</p>
+          </div>
+        </div>
+      )}
+      
       {/* Legend */}
       <div className="mt-4 flex justify-center">
-        {Object.entries(getColorForPlanningType).map(([type, color]) => (
+        {Object.entries(getColorForPlanningType()).map(([type, color]) => (
           <div key={type} className="mr-4 flex items-center">
             <div style={{ backgroundColor: color, width: '20px', height: '20px' }} className="mr-2"></div>
             <span>{type}</span>

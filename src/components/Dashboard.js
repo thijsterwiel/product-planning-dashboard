@@ -7,8 +7,8 @@ import "react-datepicker/dist/react-datepicker.css";
 import { productData } from '../data/productData';
 import ProductCard from './ProductCard';
 import TimelineView from './TimelineView';
-
-// ... rest of the Dashboard component code ...
+import ExcelImport from './ExcelImport';
+import { getProductImage } from './salsifyAPI';
 
 const Dashboard = () => {
   const [products, setProducts] = useState(productData.map(p => ({
@@ -16,16 +16,30 @@ const Dashboard = () => {
     retailer: Array.isArray(p.retailer) ? p.retailer : [],
     startDate: p.startDate || null,
     endDate: p.endDate || null,
-    planningType: p.planningType || ''
+    planningType: p.planningType || '',
+    season: p.season || '',
+    itemNumber: p.itemNumber || ''
   })));
-  const [filters, setFilters] = useState({ brands: [], retailers: [], startDate: null, endDate: null });
+  const [filters, setFilters] = useState({ 
+    brands: [], 
+    retailers: [], 
+    startDate: null, 
+    endDate: null,
+    types: [],
+    seasons: []
+  });
   const [retailers, setRetailers] = useState([
-    { name: 'Retailer A', logo: '/api/placeholder/50/50?text=A' },
-    { name: 'Retailer B', logo: '/api/placeholder/50/50?text=B' },
-    { name: 'Retailer C', logo: '/api/placeholder/50/50?text=C' },
-    { name: 'Retailer D', logo: '/api/placeholder/50/50?text=D' },
+    { name: 'Dreamland', logo: '/api/placeholder/50/50?text=D' },
+    { name: 'Otto Simon', logo: '/api/placeholder/50/50?text=OS' },
+    { name: 'Intertoys', logo: '/api/placeholder/50/50?text=I' },
+    { name: 'Toychamp', logo: '/api/placeholder/50/50?text=T' },
+    { name: 'Supra Bazar', logo: '/api/placeholder/50/50?text=SB' },
+    { name: 'Bol.com', logo: '/api/placeholder/50/50?text=B' },
   ]);
   const [newRetailerName, setNewRetailerName] = useState('');
+  const [showExcelImport, setShowExcelImport] = useState(false);
+  const [view, setView] = useState('timeline');
+  const [debugInfo, setDebugInfo] = useState('');
 
   const parseDate = (dateString) => {
     if (!dateString) return null;
@@ -45,11 +59,13 @@ const Dashboard = () => {
     (filters.brands.length === 0 || filters.brands.some(b => b.value === p.brand)) &&
     (filters.retailers.length === 0 || p.retailer.some(r => filters.retailers.some(fr => fr.value === r))) &&
     (!filters.startDate || !p.endDate || parseDate(p.endDate) >= filters.startDate) &&
-    (!filters.endDate || !p.startDate || parseDate(p.startDate) <= filters.endDate)
+    (!filters.endDate || !p.startDate || parseDate(p.startDate) <= filters.endDate) &&
+    (filters.types.length === 0 || filters.types.some(t => t.value === p.planningType)) &&
+    (filters.seasons.length === 0 || filters.seasons.some(s => s.value === p.season))
   );
 
   const resetFilters = () => {
-    setFilters({ brands: [], retailers: [], startDate: null, endDate: null });
+    setFilters({ brands: [], retailers: [], startDate: null, endDate: null, types: [], seasons: [] });
   };
 
   const savePlanning = () => {
@@ -60,8 +76,8 @@ const Dashboard = () => {
 
   const exportPlanning = () => {
     const csvContent = "data:text/csv;charset=utf-8," 
-      + "ID,Description,Brand,Retailers,Start Date,End Date,Planning Type\n"
-      + products.map(p => `${p.id},"${p.description}",${p.brand},"${p.retailer.join('; ')}",${p.startDate},${p.endDate},${p.planningType}`).join("\n");
+      + "ID;Item Number;Description;Brand;Retailers;Start Date;End Date;Planning Type;Season\n"
+      + products.map(p => `${p.id};${p.itemNumber};"${p.description}";${p.brand};"${p.retailer.join('|')}";${p.startDate};${p.endDate};${p.planningType};${p.season}`).join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -116,13 +132,15 @@ const Dashboard = () => {
   const addNewProduct = () => {
     const newProduct = {
       id: `NEW-${Date.now()}`,
+      itemNumber: '',
       description: 'New Product',
       brand: '',
       image: '/api/placeholder/100/100?text=NEW',
       retailer: [],
       startDate: null,
       endDate: null,
-      planningType: ''
+      planningType: '',
+      season: ''
     };
     setProducts([...products, newProduct]);
   };
@@ -138,7 +156,39 @@ const Dashboard = () => {
       startDate: null,
       endDate: null,
       planningType: '',
+      season: ''
     })));
+  };
+
+  const handleExcelImport = (importedProducts) => {
+    setProducts(prevProducts => [...prevProducts, ...importedProducts]);
+    setShowExcelImport(false);
+  };
+
+  const fetchProductImages = async () => {
+    setDebugInfo('Fetching images...');
+    console.log('Current products:', products);  // Add this line
+    const updatedProducts = await Promise.all(products.map(async (product) => {
+      if (product.itemNumber) {
+        setDebugInfo(prev => `${prev}\nFetching image for item ${product.itemNumber}...`);
+        try {
+          const imageUrl = await getProductImage(product.itemNumber);
+          if (imageUrl) {
+            setDebugInfo(prev => `${prev}\nImage found for item ${product.itemNumber}: ${imageUrl}`);
+            return { ...product, image: imageUrl };
+          } else {
+            setDebugInfo(prev => `${prev}\nNo image found for item ${product.itemNumber}`);
+          }
+        } catch (error) {
+          setDebugInfo(prev => `${prev}\nError fetching image for item ${product.itemNumber}: ${error.message}`);
+        }
+      } else {
+        setDebugInfo(prev => `${prev}\nSkipping item with no item number: ${product.description}`);
+      }
+      return product;
+    }));
+    setProducts(updatedProducts);
+    setDebugInfo(prev => `${prev}\nImage fetching complete.`);
   };
 
   useEffect(() => {
@@ -154,11 +204,16 @@ const Dashboard = () => {
 
   const brandOptions = [...new Set(products.map(p => p.brand))].map(brand => ({ value: brand, label: brand }));
   const retailerOptions = retailers.map(r => ({ value: r.name, label: r.name }));
+  const typeOptions = [...new Set(products.map(p => p.planningType))].map(type => ({ value: type, label: type }));
+  const seasonOptions = [
+    { value: 'Spring/Summer', label: 'Spring/Summer' },
+    { value: 'Autumn/Fall', label: 'Autumn/Fall' }
+  ];
 
   return (
     <div className="p-4 max-w-[1920px] mx-auto">
       <h1 className="text-3xl font-bold mb-6 flex items-center">
-        <Calendar className="mr-2" /> Autumn Winter 2025 Product Planning
+        <Calendar className="mr-2" /> Product Planning Dashboard
       </h1>
       
       <div className="mb-6 flex flex-wrap items-center gap-2">
@@ -179,6 +234,24 @@ const Dashboard = () => {
             value={filters.retailers}
             onChange={(selected) => setFilters({...filters, retailers: selected})}
             placeholder="Select Retailers"
+          />
+        </div>
+        <div className="w-48 mr-2">
+          <Select
+            isMulti
+            options={typeOptions}
+            value={filters.types}
+            onChange={(selected) => setFilters({...filters, types: selected})}
+            placeholder="Select Types"
+          />
+        </div>
+        <div className="w-48 mr-2">
+          <Select
+            isMulti
+            options={seasonOptions}
+            value={filters.seasons}
+            onChange={(selected) => setFilters({...filters, seasons: selected})}
+            placeholder="Select Seasons"
           />
         </div>
         <DatePicker
@@ -214,7 +287,14 @@ const Dashboard = () => {
         <button onClick={resetGanttChart} className="p-2 bg-red-500 text-white rounded flex items-center">
           <RefreshCw className="mr-1" size={16} /> Reset Gantt Chart
         </button>
+        <button onClick={() => setShowExcelImport(true)} className="mr-2 p-2 bg-purple-500 text-white rounded flex items-center">
+          <Upload className="mr-1" size={16} /> Import Excel
+        </button>
       </div>
+
+      {showExcelImport && (
+        <ExcelImport onImport={handleExcelImport} onClose={() => setShowExcelImport(false)} />
+      )}
 
       <div className="mb-6">
         <h2 className="text-2xl font-semibold mb-2">Retailers</h2>
@@ -255,37 +335,55 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <div className="mb-6 flex flex-col" style={{ height: 'calc(100vh - px)' }}> {/* Adjust 200px as needed */}
-  <h2 className="text-2xl font-semibold mb-2">Product Timeline</h2>
-  {products && products.length > 0 ? (
-    <div className="flex-grow" style={{ minHeight: 0 }}> {/* This ensures the TimelineView can grow to fill the space */}
-      <TimelineView products={filteredProducts} />
-    </div>
-  ) : (
-    <div className="flex-grow flex items-center justify-center">
-      No products available to display in the timeline.
-    </div>
-  )}
-</div>
-
       <div className="mb-6">
-        <h2 className="text-2xl font-semibold mb-2">Products</h2>
+        <div className="flex justify-between items-center mb-2">
+          <h2 className="text-2xl font-semibold">Products</h2>
+          <div>
+            <button 
+              onClick={() => setView('timeline')} 
+              className={`mr-2 p-2 rounded ${view === 'timeline' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}>
+              Timeline View
+            </button>
+            <button 
+              onClick={() => setView('cards')} 
+              className={`p-2 rounded ${view === 'cards' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+            >
+              Card View
+            </button>
+          </div>
+        </div>
         <button onClick={addNewProduct} className="mb-4 p-2 bg-green-500 text-white rounded">
           Add New Product
         </button>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-          {filteredProducts.map(product => (
-            <ProductCard 
-              key={product.id} 
-              product={product} 
-              onUpdate={updateProduct} 
-              onImageUpload={handleImageUpload}
-              retailers={retailers}
-              onRemove={removeProduct}
-            />
-          ))}
-        </div>
+        <button onClick={fetchProductImages} className="mb-4 ml-2 p-2 bg-blue-500 text-white rounded">
+          Fetch Salsify Images
+        </button>
+        {view === 'timeline' ? (
+          <div style={{ height: 'calc(100vh - 300px)', minHeight: '500px' }}>
+            <TimelineView products={filteredProducts} />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+            {filteredProducts.map(product => (
+              <ProductCard 
+                key={product.id} 
+                product={product} 
+                onUpdate={updateProduct} 
+                onImageUpload={handleImageUpload}
+                retailers={retailers}
+                onRemove={removeProduct}
+              />
+            ))}
+          </div>
+        )}
       </div>
+      
+      {debugInfo && (
+        <div className="mt-4 p-2 bg-gray-100 border border-gray-400 text-gray-700 rounded">
+          <h3 className="font-bold mb-2">Debug Info:</h3>
+          <pre className="whitespace-pre-wrap">{debugInfo}</pre>
+        </div>
+      )}
     </div>
   );
 };
